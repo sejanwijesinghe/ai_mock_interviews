@@ -5,7 +5,9 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { cn } from "@/lib/utils";
-
+import { vapi } from "@/lib/vapi.sdk";
+import { interviewer } from "@/constants";
+import { createFeedback } from "@/lib/actions/general.action";
 
 enum CallStatus {
     INACTIVE = "INACTIVE",
@@ -26,6 +28,7 @@ const Agent = ({
                    feedbackId,
                    type,
                    questions,
+                   profileImage,
                }: AgentProps) => {
     const router = useRouter();
     const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
@@ -35,14 +38,17 @@ const Agent = ({
 
     useEffect(() => {
         const onCallStart = () => {
+            console.log("Call started");
             setCallStatus(CallStatus.ACTIVE);
         };
 
         const onCallEnd = () => {
+            console.log("Call ended");
             setCallStatus(CallStatus.FINISHED);
         };
 
-        const onMessage = (message: Message) => {
+        const onMessage = (message: any) => {
+            console.log("Message received:", message);
             if (message.type === "transcript" && message.transcriptType === "final") {
                 const newMessage = { role: message.role, content: message.transcript };
                 setMessages((prev) => [...prev, newMessage]);
@@ -60,24 +66,25 @@ const Agent = ({
         };
 
         const onError = (error: Error) => {
-            console.log("Error:", error);
+            console.error("Vapi Error:", error);
+            setCallStatus(CallStatus.INACTIVE);
         };
 
-        // vapi.on("call-start", onCallStart);
-        // vapi.on("call-end", onCallEnd);
-        // vapi.on("message", onMessage);
-        // vapi.on("speech-start", onSpeechStart);
-        // vapi.on("speech-end", onSpeechEnd);
-        // vapi.on("error", onError);
-        //
-        // return () => {
-        //     vapi.off("call-start", onCallStart);
-        //     vapi.off("call-end", onCallEnd);
-        //     vapi.off("message", onMessage);
-        //     vapi.off("speech-start", onSpeechStart);
-        //     vapi.off("speech-end", onSpeechEnd);
-        //     vapi.off("error", onError);
-        // };
+        vapi.on("call-start", onCallStart);
+        vapi.on("call-end", onCallEnd);
+        vapi.on("message", onMessage);
+        vapi.on("speech-start", onSpeechStart);
+        vapi.on("speech-end", onSpeechEnd);
+        vapi.on("error", onError);
+
+        return () => {
+            vapi.off("call-start", onCallStart);
+            vapi.off("call-end", onCallEnd);
+            vapi.off("message", onMessage);
+            vapi.off("speech-start", onSpeechStart);
+            vapi.off("speech-end", onSpeechEnd);
+            vapi.off("error", onError);
+        };
     }, []);
 
     useEffect(() => {
@@ -86,67 +93,81 @@ const Agent = ({
         }
 
         const handleGenerateFeedback = async (messages: SavedMessage[]) => {
+            if (!interviewId || !userId) {
+                console.error("Missing interviewId or userId");
+                router.push("/");
+                return;
+            }
+
             console.log("handleGenerateFeedback");
 
-            // const { success, feedbackId: id } = await createFeedback({
-            //     interviewId: interviewId!,
-            //     userId: userId!,
-            //     transcript: messages,
-            //     feedbackId,
-            // });
+            const { success, feedbackId: id } = await createFeedback({
+                interviewId,
+                userId,
+                transcript: messages,
+                feedbackId,
+            });
 
-            // if (success && id) {
-            //     router.push(`/interview/${interviewId}/feedback`);
-            // } else {
-            //     console.log("Error saving feedback");
-            //     router.push("/");
-            // }
+            if (success && id) {
+                router.push(`/interview/${interviewId}/feedback`);
+            } else {
+                console.log("Error saving feedback");
+                router.push("/");
+            }
         };
 
-        if (callStatus === CallStatus.FINISHED) {
-            if (type === "generate") {
-                router.push("/");
-            } else {
-                handleGenerateFeedback(messages);
-            }
+        // FIX: Generate feedback for ALL interview types, not just custom ones
+        if (callStatus === CallStatus.FINISHED && messages.length > 0) {
+            handleGenerateFeedback(messages);
         }
     }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
 
-    // const handleCall = async () => {
-    //     setCallStatus(CallStatus.CONNECTING);
-    //
-    //     if (type === "generate") {
-    //         await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-    //             variableValues: {
-    //                 username: userName,
-    //                 userid: userId,
-    //             },
-    //         });
-    //     } else {
-    //         let formattedQuestions = "";
-    //         if (questions) {
-    //             formattedQuestions = questions
-    //                 .map((question) => `- ${question}`)
-    //                 .join("\n");
-    //         }
-    //
-    //         await vapi.start(interviewer, {
-    //             variableValues: {
-    //                 questions: formattedQuestions,
-    //             },
-    //         });
-    //     }
-    // };
-    //
-    // const handleDisconnect = () => {
-    //     setCallStatus(CallStatus.FINISHED);
-    //     vapi.stop();
-    // };
+    const handleCall = async () => {
+        setCallStatus(CallStatus.CONNECTING);
+
+        try {
+            if (type === "generate") {
+                console.log("Starting interview with assistant configuration");
+
+                await vapi.start(interviewer, {
+                    variableValues: {
+                        questions: `Please conduct a general interview with ${userName}. Ask about their experience, skills, and career goals.`,
+                    },
+                });
+            } else {
+                // Custom interview with questions
+                let formattedQuestions = "";
+                if (questions && questions.length > 0) {
+                    formattedQuestions = questions
+                        .map((question) => `- ${question}`)
+                        .join("\n");
+                } else {
+                    formattedQuestions = "- Tell me about yourself\n- What are your strengths?\n- Why do you want this position?";
+                }
+
+                console.log("Starting interview with questions:", formattedQuestions);
+
+                await vapi.start(interviewer, {
+                    variableValues: {
+                        questions: formattedQuestions,
+                    },
+                });
+            }
+        } catch (error) {
+            console.error("Failed to start call:", error);
+            alert("Failed to start the interview. Please check the console for details.");
+            setCallStatus(CallStatus.INACTIVE);
+        }
+    };
+
+    const handleDisconnect = () => {
+        setCallStatus(CallStatus.FINISHED);
+        vapi.stop();
+    };
 
     return (
         <>
             <div className="call-view">
-                {/* AI Interviewer Card */}
                 <div className="card-interviewer">
                     <div className="avatar">
                         <Image
@@ -161,14 +182,13 @@ const Agent = ({
                     <h3>AI Interviewer</h3>
                 </div>
 
-                {/* User Profile Card */}
                 <div className="card-border">
                     <div className="card-content">
                         <Image
-                            src="/user-avatar.png"
+                            src={profileImage || "/user-avatar.png"}
                             alt="profile-image"
-                            width={539}
-                            height={539}
+                            width={120}
+                            height={120}
                             className="rounded-full object-cover size-[120px]"
                         />
                         <h3>{userName}</h3>
@@ -194,25 +214,27 @@ const Agent = ({
 
             <div className="w-full flex justify-center">
                 {callStatus !== "ACTIVE" ? (
-                    <button className="relative btn-call" >
-                        {/*onClick={() => handleCall()}*/}
-            <span
-                className={cn(
-                    "absolute animate-ping rounded-full opacity-75",
-                    callStatus !== "CONNECTING" && "hidden"
-                )}
-            />
+                    <button
+                        className="relative btn-call"
+                        onClick={handleCall}
+                        disabled={callStatus === CallStatus.CONNECTING}
+                    >
+                        <span
+                            className={cn(
+                                "absolute animate-ping rounded-full opacity-75 bg-green-500 inset-0",
+                                callStatus !== "CONNECTING" && "hidden"
+                            )}
+                        />
 
                         <span className="relative">
-              {callStatus === "INACTIVE" || callStatus === "FINISHED"
-                  ? "Call"
-                  : ". . ."}
-            </span>
+                            {callStatus === "INACTIVE" || callStatus === "FINISHED"
+                                ? "Start Interview"
+                                : "Connecting..."}
+                        </span>
                     </button>
                 ) : (
-                    <button className="btn-disconnect">
-                        {/*onClick={() => handleDisconnect()}*/}
-                        End
+                    <button className="btn-disconnect" onClick={handleDisconnect}>
+                        End Interview
                     </button>
                 )}
             </div>
