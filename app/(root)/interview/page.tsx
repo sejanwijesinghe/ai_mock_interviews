@@ -1,14 +1,43 @@
-import Agent from "@/components/Agent"
-import React from 'react'
+import Agent from "@/components/Agent";
+import { getCurrentUser } from "@/lib/actions/auth.actions";
+import { createGeneratedInterview } from "@/lib/actions/general.action";
+import { redirect } from "next/navigation";
 
-const Page = () => {
+const InterviewPage = async () => {
+    const user = await getCurrentUser();
+
+    // Redirect if no user
+    if (!user) {
+        redirect("/sign-in");
+    }
+
+    // Create interview record BEFORE rendering Agent
+    const interview = await createGeneratedInterview({
+        userId: user.id,
+        userName: user.name,
+    });
+
+    // If interview creation failed, redirect to home
+    if (!interview) {
+        console.error("Failed to create interview");
+        redirect("/");
+    }
+
+    console.log("Created interview with ID:", interview.id);
+
     return (
-        <>
-            <h3 className="call-view">Interview Generation</h3>
+        <div className="min-h-screen flex flex-col items-center justify-center p-8">
+            <h3 className="text-2xl font-bold mb-8">Interview Generation</h3>
 
-            <Agent userName="You" userId="user1" type="generate" />
+            <Agent
+                userName={user.name}
+                userId={user.id}
+                interviewId={interview.id}
+                profileImage={user.profileURL}
+                type="generate"
+            />
+        </div>
+    );
+};
 
-        </>
-    )
-}
-export default Page
+export default InterviewPage;

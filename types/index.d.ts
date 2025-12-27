@@ -23,6 +23,7 @@ interface Interview {
   userId: string;
   type: string;
   finalized: boolean;
+  amount?: number; // Add if you need it for question count
 }
 
 interface CreateFeedbackParams {
@@ -36,6 +37,7 @@ interface User {
   name: string;
   email: string;
   id: string;
+  profileURL?: string; // Add this for profile image support
 }
 
 interface InterviewCardProps {
@@ -45,15 +47,17 @@ interface InterviewCardProps {
   type: string;
   techstack: string[];
   createdAt?: string;
+  level?: string; // Add this if you display level in the card
 }
 
 interface AgentProps {
   userName: string;
-  userId?: string;
+  userId: string; // Make this required (not optional)
   interviewId?: string;
   feedbackId?: string;
   type: "generate" | "interview";
   questions?: string[];
+  profileImage?: string; // Add this for profile image
 }
 
 interface RouteParams {
@@ -96,4 +100,22 @@ interface InterviewFormProps {
 
 interface TechIconProps {
   techStack: string[];
+}
+
+// Add this for Vapi messages
+interface Message {
+  type: string;
+  transcriptType?: string;
+  role: "user" | "assistant" | "system";
+  transcript: string;
+}
+
+// Add this for interview data from Firebase
+interface InterviewData {
+  type: string;
+  role: string;
+  level: string;
+  techstack: string;
+  amount: string;
+  userid: string;
 }
