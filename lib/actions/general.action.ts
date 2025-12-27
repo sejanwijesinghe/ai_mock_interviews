@@ -10,7 +10,24 @@ export async function createFeedback(params: CreateFeedbackParams) {
     const { interviewId, userId, transcript, feedbackId } = params;
 
     try {
-        console.log("Creating feedback for interview:", interviewId);
+        console.log("=== SERVER: Creating feedback ===");
+        console.log("Interview ID:", interviewId);
+        console.log("User ID:", userId);
+        console.log("Transcript length:", transcript?.length);
+        console.log("Existing feedback ID:", feedbackId);
+
+        // Validate inputs
+        if (!interviewId || !userId) {
+            console.error("❌ Missing required parameters");
+            return { success: false, error: "Missing interviewId or userId" };
+        }
+
+        if (!transcript || transcript.length === 0) {
+            console.error("❌ Empty transcript");
+            return { success: false, error: "Transcript is empty" };
+        }
+
+        console.log("✅ Validation passed, formatting transcript...");
 
         const formattedTranscript = transcript
             .map(
@@ -18,6 +35,11 @@ export async function createFeedback(params: CreateFeedbackParams) {
                     `- ${sentence.role}: ${sentence.content}\n`
             )
             .join("");
+
+        console.log("📝 Formatted transcript preview:");
+        console.log(formattedTranscript.substring(0, 200) + "...");
+
+        console.log("🤖 Calling OpenAI to generate feedback...");
 
         const { object } = await generateObject({
             model: openai("gpt-4o-mini"),
@@ -38,6 +60,12 @@ export async function createFeedback(params: CreateFeedbackParams) {
                 "You are a professional interviewer analyzing a mock interview. Your task is to evaluate the candidate based on structured categories",
         });
 
+        console.log("✅ OpenAI response received");
+        console.log("Total Score:", object.totalScore);
+        console.log("Category Scores:", object.categoryScores?.length);
+        console.log("Strengths:", object.strengths?.length);
+        console.log("Areas for Improvement:", object.areasForImprovement?.length);
+
         const feedback = {
             interviewId: interviewId,
             userId: userId,
@@ -49,26 +77,40 @@ export async function createFeedback(params: CreateFeedbackParams) {
             createdAt: new Date().toISOString(),
         };
 
+        console.log("💾 Saving feedback to database...");
+
         let feedbackRef;
 
         if (feedbackId) {
             feedbackRef = db.collection("feedback").doc(feedbackId);
-            console.log("Updating existing feedback:", feedbackId);
+            console.log("📝 Updating existing feedback:", feedbackId);
         } else {
             feedbackRef = db.collection("feedback").doc();
-            console.log("Creating new feedback with ID:", feedbackRef.id);
+            console.log("🆕 Creating new feedback with ID:", feedbackRef.id);
         }
 
         await feedbackRef.set(feedback);
-        console.log("Feedback saved successfully");
+        console.log("✅ Feedback saved successfully to Firestore");
 
         // Finalize the interview after feedback is created
+        console.log("🏁 Finalizing interview...");
         await finalizeInterview(interviewId);
+        console.log("✅ Interview finalized");
 
+        console.log("🎉 Feedback creation complete!");
         return { success: true, feedbackId: feedbackRef.id };
     } catch (error) {
-        console.error("Error saving feedback:", error);
-        return { success: false };
+        console.error("❌ ERROR in createFeedback:");
+        console.error("Error type:", error?.constructor?.name);
+        console.error("Error message:", error instanceof Error ? error.message : "Unknown");
+        console.error("Full error:", error);
+
+        // Return more specific error info
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error occurred",
+            errorType: error?.constructor?.name
+        };
     }
 }
 
@@ -94,7 +136,9 @@ export async function getFeedbackByInterviewId(
     const { interviewId, userId } = params;
 
     try {
-        console.log("Fetching feedback for interview:", interviewId, "user:", userId);
+        console.log("=== SERVER: Fetching feedback ===");
+        console.log("Interview ID:", interviewId);
+        console.log("User ID:", userId);
 
         const querySnapshot = await db
             .collection("feedback")
@@ -104,15 +148,17 @@ export async function getFeedbackByInterviewId(
             .get();
 
         if (querySnapshot.empty) {
-            console.log("No feedback found for this interview");
+            console.log("⚠️ No feedback found for this interview");
             return null;
         }
 
         const feedbackDoc = querySnapshot.docs[0];
-        console.log("Feedback found:", feedbackDoc.id);
-        return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
+        console.log("✅ Feedback found:", feedbackDoc.id);
+        const feedbackData = { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
+        console.log("📊 Total Score:", feedbackData.totalScore);
+        return feedbackData;
     } catch (error) {
-        console.error("Error fetching feedback:", error);
+        console.error("❌ Error fetching feedback:", error);
         return null;
     }
 }
@@ -184,10 +230,17 @@ export async function createGeneratedInterview(params: {
 
         const interview = {
             userId,
-            role: "General",
-            type: "generated",
+            role: "General Position",
+            level: "All Levels",
+            type: "Mixed",
             techstack: [],
-            questions: [`General interview with ${userName}`],
+            questions: [
+                "Tell me about yourself and your professional background",
+                "What motivated you to pursue your current career path?",
+                "What are your key strengths?",
+                "Describe a challenging project you faced",
+                "What are your career goals?",
+            ],
             finalized: false, // Will be set to true after feedback is generated
             createdAt: new Date().toISOString(),
         };
@@ -205,14 +258,17 @@ export async function createGeneratedInterview(params: {
 
 export async function finalizeInterview(interviewId: string): Promise<boolean> {
     try {
+        console.log("Finalizing interview:", interviewId);
+
         await db.collection("interviews").doc(interviewId).update({
             finalized: true,
         });
 
-        console.log("Interview finalized:", interviewId);
+        console.log("✅ Interview finalized successfully");
         return true;
     } catch (error) {
-        console.error("Error finalizing interview:", error);
+        console.error("❌ Error finalizing interview:", error);
+        console.error("Error details:", error);
         return false;
     }
 }
@@ -250,5 +306,43 @@ export async function createCustomInterview(params: {
     } catch (error) {
         console.error("Error creating custom interview:", error);
         return null;
+    }
+}
+
+
+export async function updateInterviewWithQuestions(params: {
+    interviewId: string;
+    role: string;
+    level: string;
+    type: string;
+    techstack: string[];
+    questions: string[];
+}): Promise<boolean> {
+    const { interviewId, role, level, type, techstack, questions } = params;
+
+    try {
+        console.log("=== SERVER: Updating interview ===");
+        console.log("Interview ID:", interviewId);
+        console.log("Role:", role);
+        console.log("Level:", level);
+        console.log("Type:", type);
+        console.log("Tech stack:", techstack);
+        console.log("Questions count:", questions?.length);
+
+        await db.collection("interviews").doc(interviewId).update({
+            role,
+            level,
+            type,
+            techstack,
+            questions,
+            updatedAt: new Date().toISOString(),
+        });
+
+        console.log("✅ Interview updated successfully");
+        return true;
+    } catch (error) {
+        console.error("❌ Error updating interview:", error);
+        console.error("Error details:", error);
+        return false;
     }
 }
